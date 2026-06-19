@@ -143,6 +143,49 @@ func (s *InventoryService) DeductSetStock(setID string, quantity int) (*model.St
 	return s.calcSetStockLocked(set)
 }
 
+func (s *InventoryService) ReturnSetStock(setID string, quantity int) (*model.StockInfo, []model.StockInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	set, ok := s.sets[setID]
+	if !ok {
+		return nil, nil, ErrSetNotFound
+	}
+
+	if quantity <= 0 {
+		return nil, nil, errors.New("quantity must be positive")
+	}
+
+	for _, item := range set.Items {
+		sku, ok := s.skus[item.SKUID]
+		if !ok {
+			return nil, nil, ErrSKUNotFound
+		}
+		sku.Stock += item.Quantity * quantity
+		sku.UpdatedAt = time.Now()
+	}
+
+	set.UpdatedAt = time.Now()
+
+	setStock, err := s.calcSetStockLocked(set)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var affectedSKUs []model.StockInfo
+	for _, item := range set.Items {
+		sku := s.skus[item.SKUID]
+		affectedSKUs = append(affectedSKUs, model.StockInfo{
+			ID:    sku.ID,
+			Name:  sku.Name,
+			Type:  model.TypeSKU,
+			Stock: sku.Stock,
+		})
+	}
+
+	return setStock, affectedSKUs, nil
+}
+
 func (s *InventoryService) UpdateSKUStock(skuID string, stock int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

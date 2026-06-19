@@ -31,6 +31,11 @@ type DeductSKUResult struct {
 	AffectedSets []model.StockInfo `json:"affected_sets"`
 }
 
+type ReturnSetResult struct {
+	Set          model.StockInfo   `json:"set"`
+	AffectedSKUs []model.StockInfo `json:"affected_skus"`
+}
+
 func (h *InventoryHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/stock", h.handleStock)
 	mux.HandleFunc("/api/stock/sku/", h.handleSKUStock)
@@ -38,6 +43,7 @@ func (h *InventoryHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/stock/all", h.handleAllStock)
 	mux.HandleFunc("/api/stock/deduct/sku/", h.handleDeductSKU)
 	mux.HandleFunc("/api/stock/deduct/set/", h.handleDeductSet)
+	mux.HandleFunc("/api/stock/return/set/", h.handleReturnSet)
 }
 
 func (h *InventoryHandler) handleStock(w http.ResponseWriter, r *http.Request) {
@@ -183,6 +189,47 @@ func (h *InventoryHandler) handleDeductSet(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeSuccess(w, setStock)
+}
+
+func (h *InventoryHandler) handleReturnSet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut && r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/api/stock/return/set/")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "set id is required")
+		return
+	}
+
+	var req DeductRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.Quantity <= 0 {
+		writeError(w, http.StatusBadRequest, "quantity must be positive")
+		return
+	}
+
+	setStock, affectedSKUs, err := h.svc.ReturnSetStock(id, req.Quantity)
+	if err != nil {
+		if err == service.ErrSetNotFound {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else if err == service.ErrSKUNotFound {
+			writeError(w, http.StatusBadRequest, "set contains missing sku: "+err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+
+	writeSuccess(w, ReturnSetResult{
+		Set:          *setStock,
+		AffectedSKUs: affectedSKUs,
+	})
 }
 
 func (h *InventoryHandler) getSKUStock(w http.ResponseWriter, skuID string) {
